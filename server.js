@@ -39,6 +39,7 @@ const thuocSchema = new mongoose.Schema({
     gia_thuoc: { type: Number, required: true },
     hinh_anh: { type: String, default: null },
     so_luong: { type: Number, required: true },
+    han_che: { type: Number, required: true },
 });
 const Thuoc = mongoose.model("Thuoc", thuocSchema);
 
@@ -80,6 +81,7 @@ app.post("/add-thuoc", upload.single("hinh_anh"), async (req, res) => {
             gia_thuoc,
             so_luong,
             hinh_anh,
+            han_che: 1,
         });
 
         await newThuoc.save();
@@ -99,53 +101,13 @@ app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 // API lấy tất cả thuốc
 app.get("/get-all-thuoc", async (req, res) => {
     try {
-        const allMedicines = await Thuoc.find().exec();
+        const allMedicines = await Thuoc.find().exec(); // Chỉ lấy thuốc có han_che = 0
         res.json(allMedicines);
     } catch (err) {
         res.status(500).send("Lỗi truy vấn MongoDB: " + err.message);
     }
 });
 
-// API lấy thông tin thuốc
-
-// // API lấy thông tin thuốc từ barcode
-// app.get("/get-thuoc/:barcode", async (req, res) => {
-//     const { barcode } = req.params;
-//     try {
-//         const medicines = await Thuoc.find({ barcode: barcode }).exec();
-//         if (!medicines) {
-//             res.status(404).json({
-//                 message: "Không tìm thấy thuốc với barcode này",
-//             });
-//             return;
-//         }
-//         const response = {
-//             data: medicines.map(
-//                 ({ ten_thuoc, gia_thuoc, hinh_anh, so_luong }) => ({
-//                     ten_thuoc,
-//                     gia_thuoc,
-//                     hinh_anh,
-//                     so_luong,
-//                 })
-//             ),
-//         };
-//         res.json(response);
-
-//         // Gửi thông tin cập nhật qua WebSocket
-//         const responseString = JSON.stringify(response);
-//         wss.clients.forEach((client) => {
-//             if (client.readyState === WebSocket.OPEN) {
-//                 client.send(responseString);
-//             }
-//         });
-
-//         console.log("Truy vấn thành công:", response);
-//     } catch (err) {
-//         console.error("Lỗi khi thực hiện truy vấn:", err.message);
-//         res.status(500).send("Lỗi truy vấn MongoDB: " + err.message);
-//     }
-// });
-// API để tìm thuốc theo tên
 // API để tìm thuốc theo tên
 app.get("/chon-thuoc/:ten_thuoc", async (req, res) => {
     const { ten_thuoc } = req.params; // Lấy tham số ten_thuoc từ URL
@@ -154,6 +116,7 @@ app.get("/chon-thuoc/:ten_thuoc", async (req, res) => {
         // Tìm thuốc có tên giống với tên thuốc trong cơ sở dữ liệu
         const medicines = await Thuoc.find({
             ten_thuoc: new RegExp(ten_thuoc, "i"), // Dùng RegExp để tìm kiếm không phân biệt chữ hoa chữ thường
+            han_che: 0, // Chỉ lấy thuốc có han_che = 0
         }).exec();
 
         if (medicines.length === 0) {
@@ -166,11 +129,12 @@ app.get("/chon-thuoc/:ten_thuoc", async (req, res) => {
         // Nếu tìm thấy thuốc, trả về dữ liệu thuốc
         const response = {
             data: medicines.map(
-                ({ ten_thuoc, gia_thuoc, hinh_anh, so_luong }) => ({
+                ({ ten_thuoc, gia_thuoc, hinh_anh, so_luong, han_che }) => ({
                     ten_thuoc,
                     gia_thuoc,
                     hinh_anh,
                     so_luong,
+                    han_che,
                 })
             ),
         };
@@ -192,6 +156,47 @@ app.get("/chon-thuoc/:ten_thuoc", async (req, res) => {
     }
 });
 
+// Danh sách thuốc fake
+const danhSachThuoc = [
+    {
+        ten_thuoc: "Acetyldihydrocodeine",
+        gia_thuoc: 100000,
+        hinh_anh: "/uploads/acetyldihydrocodein.jpg",
+        so_luong: 50,
+        han_che: 1,
+    },
+    {
+        ten_thuoc: "Alfentanil",
+        gia_thuoc: 12000,
+        hinh_anh: "/uploads/alfentanil.jpg",
+        so_luong: 40,
+        han_che: 1,
+    },
+    {
+        ten_thuoc: "Alphaprodine",
+        gia_thuoc: 15000,
+        hinh_anh: "/uploads/alphaprodine.jpg",
+        so_luong: 60,
+        han_che: 1,
+    },
+    {
+        ten_thuoc: "Butorphanol",
+        gia_thuoc: 20000,
+        hinh_anh: "/uploads/butorphanol.jpg",
+        so_luong: 30,
+        han_che: 1,
+    },
+];
+
+// // // Chèn dữ liệu vào MongoDB
+// Thuoc.insertMany(danhSachThuoc)
+//     .then(() => {
+//         console.log("✅ Thêm dữ liệu thành công!");
+//         mongoose.disconnect();
+//     })
+//     .catch((err) => {
+//         console.error("❌ Lỗi khi thêm dữ liệu:", err);
+//     });
 // Khởi chạy server
 app.listen(port, () => {
     console.log(`Máy chủ đang chạy tại: http://localhost:${port}`);
