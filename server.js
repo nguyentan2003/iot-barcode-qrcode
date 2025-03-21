@@ -7,6 +7,8 @@ const WebSocket = require("ws");
 const mongoose = require("mongoose");
 const multer = require("multer");
 const path = require("path");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
 
 // Khởi tạo Express app
 const app = express();
@@ -108,15 +110,18 @@ app.get("/get-all-thuoc", async (req, res) => {
     }
 });
 
+const mongoSanitize = require("express-mongo-sanitize");
+app.use(mongoSanitize());
+
 // API để tìm thuốc theo tên
 app.get("/chon-thuoc/:ten_thuoc", async (req, res) => {
     const { ten_thuoc } = req.params; // Lấy tham số ten_thuoc từ URL
     console.log("Tên thuốc tìm kiếm:", ten_thuoc); // Kiểm tra đầu vào từ URL
     try {
-        // Tìm thuốc có tên giống với tên thuốc trong cơ sở dữ liệu
+        const sanitizedTenThuoc = ten_thuoc.replace(/[^a-zA-Z0-9\s]/g, ""); // Chỉ giữ chữ và số
         const medicines = await Thuoc.find({
-            ten_thuoc: new RegExp(ten_thuoc, "i"), // Dùng RegExp để tìm kiếm không phân biệt chữ hoa chữ thường
-            han_che: 0, // Chỉ lấy thuốc có han_che = 0
+            ten_thuoc: new RegExp(`^${sanitizedTenThuoc}$`, "i"),
+            han_che: 0,
         }).exec();
 
         if (medicines.length === 0) {
@@ -153,6 +158,56 @@ app.get("/chon-thuoc/:ten_thuoc", async (req, res) => {
     } catch (err) {
         console.error("Lỗi khi thực hiện truy vấn:", err.message);
         res.status(500).send("Lỗi truy vấn MongoDB: " + err.message);
+    }
+});
+
+// API lấy thông tin đơn thuốc theo mã đơn hàng
+app.get("/don-thuoc/:ma_don_thuoc", async (req, res) => {
+    const { ma_don_thuoc } = req.params; // Lấy mã đơn hàng từ URL
+
+    try {
+        // Tìm đơn hàng theo ID
+        const order = await Order.findById(ma_don_thuoc);
+        if (!order) {
+            return res.status(404).json({
+                status: 404,
+                message: "Không tìm thấy đơn thuốc!",
+            });
+        }
+
+        // Lấy danh sách thuốc trong đơn hàng
+        const orderDetails = await OrderDetail.find({ order_id: ma_don_thuoc });
+
+        // Trả về kết quả
+        let response = {
+            status: 200,
+            ma_don_thuoc,
+            nguoi_mua: order.nguoi_mua,
+            tong_tien: order.tong_tien,
+            danh_sach_thuoc: orderDetails.map(
+                ({ ten_thuoc, quantity, gia_thuoc, hinh_anh }) => ({
+                    ten_thuoc,
+                    quantity,
+                    gia_thuoc,
+                    hinh_anh,
+                })
+            ),
+        };
+        res.json(response);
+        // Gửi thông tin cập nhật qua WebSocket
+        const responseString = JSON.stringify(response);
+        wss.clients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) {
+                client.send(responseString);
+            }
+        });
+    } catch (error) {
+        console.error("Lỗi khi lấy đơn thuốc:", error);
+        res.status(500).json({
+            status: 500,
+            message: "Lỗi khi lấy đơn thuốc",
+            error,
+        });
     }
 });
 
@@ -198,6 +253,138 @@ const danhSachThuoc = [
 //         console.error("❌ Lỗi khi thêm dữ liệu:", err);
 //     });
 // Khởi chạy server
+
+// Định nghĩa schema cho bảng user
+const Schema = mongoose.Schema;
+const UserSchema = new Schema({
+    username: String,
+    password: String,
+    role: { type: String, enum: ["user", "admin"] },
+});
+
+const User = mongoose.model("User", UserSchema);
+
+// // Băm mật khẩu sử dụng bcrypt
+// const saltRounds = 10; // số lượng vòng lặp để băm mật khẩu
+// bcrypt.hash("password", saltRounds, (err, hashedPassword) => {
+//     if (err) throw err;
+
+//     // Tạo các tài khoản mẫu
+//     const users = [
+//         { username: "user", password: hashedPassword, role: "user" },
+//         { username: "admin", password: hashedPassword, role: "admin" },
+//     ];
+
+//     // Thêm các tài khoản vào MongoDB
+//     async function createUsers() {
+//         try {
+//             const docs = await User.insertMany(users);
+//             console.log("Thêm tài khoản mẫu thành công:", docs);
+//         } catch (err) {
+//             console.error("Lỗi khi thêm tài khoản:", err);
+//         } finally {
+//             mongoose.disconnect();
+//         }
+//     }
+
+//     // Gọi hàm tạo tài khoản
+//     createUsers();
+// });
+
+app.post("/login", async (req, res) => {
+    const { username, password } = req.body;
+    const user = await User.findOne({ username });
+
+    if (!user) return res.status(401).json({ message: "Sai tên đăng nhập!" });
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(401).json({ message: "Sai mật khẩu!" });
+
+    const token = jwt.sign({ id: user._id, role: user.role }, "SECRET_KEY", {
+        expiresIn: "1h",
+    });
+    res.json({ token });
+});
+
+// Định nghĩa Schema cho bảng Order
+const orderSchema = new mongoose.Schema(
+    {
+        nguoi_mua: { type: String, required: true },
+        tong_tien: { type: Number, required: true },
+    },
+    { timestamps: true }
+);
+
+const Order = mongoose.model("Order", orderSchema);
+
+// Định nghĩa Schema cho bảng Order Detail
+const orderDetailSchema = new mongoose.Schema({
+    order_id: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Order",
+        required: true,
+    },
+    ten_thuoc: { type: String, required: true },
+    quantity: { type: Number, required: true },
+    gia_thuoc: { type: Number, required: true },
+    hinh_anh: { type: String, required: true },
+});
+
+const OrderDetail = mongoose.model("OrderDetail", orderDetailSchema);
+
+// API để tạo đơn thuốc
+app.post("/create-order", async (req, res) => {
+    const { nguoi_mua, tong_tien, danh_sach_thuoc } = req.body;
+
+    console.log(nguoi_mua);
+    console.log(tong_tien);
+    console.log(danh_sach_thuoc);
+
+    // Kiểm tra dữ liệu đầu vào
+    if (
+        !nguoi_mua ||
+        !tong_tien ||
+        !Array.isArray(danh_sach_thuoc) ||
+        danh_sach_thuoc.length === 0
+    ) {
+        return res.status(400).json({
+            message:
+                "Thiếu thông tin đơn hàng hoặc danh sách thuốc không hợp lệ!",
+        });
+    }
+
+    try {
+        // Tạo đơn hàng
+        const newOrder = new Order({ nguoi_mua, tong_tien });
+        await newOrder.save();
+
+        // Lưu chi tiết đơn hàng
+        const orderDetails = danh_sach_thuoc.map((thuoc) => ({
+            order_id: newOrder._id,
+            ten_thuoc: thuoc.ten_thuoc,
+            quantity: thuoc.quantity,
+            gia_thuoc: thuoc.gia_thuoc,
+            hinh_anh: thuoc.hinh_anh,
+        }));
+
+        await OrderDetail.insertMany(orderDetails);
+
+        res.status(201).json({
+            status: 0,
+            message: "Đơn thuốc đã được tạo thành công!",
+            order: newOrder,
+            orderDetails,
+        });
+    } catch (error) {
+        console.error("Lỗi khi tạo đơn thuốc:", error);
+        res.status(500).json({
+            status: 1,
+            message: "Lỗi khi tạo đơn thuốc",
+            error,
+        });
+    }
+});
+
 app.listen(port, () => {
     console.log(`Máy chủ đang chạy tại: http://localhost:${port}`);
 });
