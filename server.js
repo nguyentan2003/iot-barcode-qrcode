@@ -56,20 +56,45 @@ wss.on("connection", (ws) => {
 });
 
 // Cấu hình Multer để lưu trữ ảnh vào thư mục 'uploads'
+// 🔹 Hàm lọc & kiểm tra tên file (chỉ cho phép chữ, số, _ và -)
+const sanitizeFilename = (name) => {
+    return name.replace(/[^a-zA-Z0-9_-]/g, ""); // Loại bỏ ký tự nguy hiểm
+};
+
+// 🔹 Cấu hình Multer: Lưu file vào thư mục 'uploads'
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
-        cb(null, "uploads/"); // Lưu ảnh vào thư mục 'uploads'
+        cb(null, "uploads/"); // Lưu vào thư mục 'uploads'
     },
     filename: function (req, file, cb) {
-        const fileExtension = path.extname(file.originalname); // Lấy phần mở rộng của file (e.g., '.jpg', '.png')
-        const newFileName =
-            req.body.ten_thuoc.replace(/\s+/g, "_").toLowerCase() +
-            fileExtension; // Tạo tên file mới
-        cb(null, newFileName); // Đặt tên cho file
+        const fileExtension = path.extname(file.originalname); // Lấy đuôi file
+        const sanitizedFileName = sanitizeFilename(
+            req.body.ten_thuoc || "default"
+        );
+        const uniqueName = uuidv4(); // Tạo tên file ngẫu nhiên
+        cb(
+            null,
+            sanitizedFileName.toLowerCase() + "_" + uniqueName + fileExtension
+        );
     },
 });
 
-const upload = multer({ storage: storage }); // Khai báo upload với cấu hình Multer
+// 🔹 Chặn file không phải ảnh (chỉ cho phép JPG, PNG, GIF)
+const fileFilter = (req, file, cb) => {
+    const allowedTypes = ["image/jpeg", "image/png", "image/gif"];
+    if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true);
+    } else {
+        cb(new Error("Chỉ chấp nhận file ảnh (JPG, PNG, GIF)!"), false);
+    }
+};
+
+// 🔹 Cấu hình Multer (Giới hạn 5MB)
+const upload = multer({
+    storage: storage,
+    fileFilter: fileFilter,
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+});
 
 // Route để thêm thuốc mới
 app.post("/add-thuoc", upload.single("hinh_anh"), async (req, res) => {
@@ -303,7 +328,10 @@ app.post("/login", async (req, res) => {
     const token = jwt.sign({ id: user._id, role: user.role }, "SECRET_KEY", {
         expiresIn: "1h",
     });
-    res.json({ token });
+    res.json({
+        token: token,
+        role: user.role,
+    });
 });
 
 // Định nghĩa Schema cho bảng Order
