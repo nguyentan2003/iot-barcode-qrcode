@@ -10,6 +10,9 @@ const path = require("path");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
+const https = require("https");
+const fs = require("fs");
+
 // Khởi tạo Express app
 const app = express();
 const port = process.env.PORT || 8000;
@@ -108,7 +111,7 @@ app.post("/add-thuoc", upload.single("hinh_anh"), async (req, res) => {
             gia_thuoc,
             so_luong,
             hinh_anh,
-            han_che: 1,
+            han_che: 0,
         });
 
         await newThuoc.save();
@@ -413,6 +416,20 @@ app.post("/create-order", async (req, res) => {
     }
 });
 
-app.listen(port, () => {
-    console.log(`Máy chủ đang chạy tại: http://localhost:${port}`);
+// app.listen(port, () => {
+//     console.log(`Máy chủ đang chạy tại: http://localhost:${port}`);
+// });
+// Đọc chứng chỉ SSL
+const options = {
+    key: fs.readFileSync("private.key"),
+    cert: fs.readFileSync("certificate.crt"),
+};
+
+// Tạo server HTTPS
+https.createServer(options, app).listen(443, () => {
+    console.log("HTTPS Server is running on https://localhost:443");
+});
+
+app.get("/123", (req, res) => {
+    res.send("Hello from HTTPS Server!");
 });
